@@ -1,18 +1,25 @@
-from aiogram import Bot, Dispatcher, types
-import asyncio
 import os
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-TOKEN = os.getenv("8875824495:AAGcaII9dC54zhTvfgbxCsgj7JIizZpThjc")
+BOT_TOKEN = os.getenv("8875824495:AAGcaII9dC54zhTvfgbxCsgj7JIizZpThjc")
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет!")
 
-@dp.message()
-async def echo(message: types.Message):
-    await message.answer(f"Ты сказал: {message.text}")
-
-async def main():
-    await dp.start_polling(bot)
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    
+    # Railway дает порт через переменную PORT
+    port = int(os.getenv("PORT", 8080))
+    
+    # Запускаем веб-хук для Railway
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=f"https://{os.getenv('RAILWAY_STATIC_URL')}/webhook"
+    )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
