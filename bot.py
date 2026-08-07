@@ -13,7 +13,7 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Хранилища в памяти
+# Хранилища данных в памяти
 roblox_gold = {}
 telegram_links = {}
 
@@ -51,7 +51,8 @@ async def cmd_start(message: types.Message):
         "3️⃣ Команда <code>/top</code> покажет топ игроков.\n"
     )
     if linked_nick:
-        msg += f"\n✅ Ваш текущий Roblox ник: <b>{html.escape(str(linked_nick))}</b>"
+        safe_nick = html.escape(str(linked_nick))
+        msg += f"\n✅ Ваш текущий Roblox ник: <b>{safe_nick}</b>"
     else:
         msg += "\n⚠️ У вас еще не привязан ник. Привяжите его через <code>/link</code>."
 
