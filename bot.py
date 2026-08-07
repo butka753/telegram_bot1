@@ -1,4 +1,5 @@
 import asyncio
+import html
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandObject
@@ -13,17 +14,13 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # Хранилища в памяти
-# roblox_gold: {"RobloxUsername": 1000}
 roblox_gold = {}
-
-# telegram_links: {telegram_user_id: "RobloxUsername"}
 telegram_links = {}
 
 # --- ПРИЕМ ДАННЫХ ИЗ ROBLOX ---
 async def handle_update_gold(request):
     try:
         data = await request.json()
-        # Ожидаем JSON: {"username": "ИмяИгрока", "gold": 500}
         username = data.get('username')
         gold = data.get('gold')
 
@@ -38,7 +35,7 @@ async def handle_update_gold(request):
         return web.json_response({'status': 'invalid payload'}, status=400)
 
 
-# --- ОБРАБОТЧИКИ TELEGRAM ---
+# --- ОБРАБОТЧИКИ TELEGRAM (HTML РАЗМЕТКА) ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -46,36 +43,38 @@ async def cmd_start(message: types.Message):
     linked_nick = telegram_links.get(tg_id)
 
     msg = (
-        "👋 **Привет! Я бот для отслеживания фарма в Roblox.**\n\n"
-        "📌 **Как пользоваться:**\n"
+        "👋 <b>Привет! Я бот для отслеживания фарма в Roblox.</b>\n\n"
+        "📌 <b>Как пользоваться:</b>\n"
         "1️⃣ Привяжи свой Roblox никнейм командой:\n"
-        "   `/link ТвойНикRoblox`\n"
-        "2️⃣ Напиши `/test` или `/mygold`, чтобы проверить баланс.\n"
-        "3️⃣ Команда `/top` покажет топ игроков.\n"
+        "   <code>/link ТвойНикRoblox</code>\n"
+        "2️⃣ Напиши <code>/test</code>, чтобы проверить баланс.\n"
+        "3️⃣ Команда <code>/top</code> покажет топ игроков.\n"
     )
     if linked_nick:
-        msg += f"\n✅ Ваш текущий Roblox ник: **{linked_nick}**"
+        msg += f"\n✅ Ваш текущий Roblox ник: <b>{html.escape(str(linked_nick))}</b>"
     else:
-        msg += "\n⚠️ У вас еще не привязан ник. Привяжите его через `/link`."
+        msg += "\n⚠️ У вас еще не привязан ник. Привяжите его через <code>/link</code>."
 
-    await message.answer(msg, parse_mode="Markdown")
+    await message.answer(msg, parse_mode="HTML")
 
 
 @dp.message(Command("link"))
 async def cmd_link(message: types.Message, command: CommandObject):
     if not command.args:
-        await message.answer("⚠️ **Укажите ваш Roblox никнейм!**\nПример: `/link Builderman`", parse_mode="Markdown")
+        await message.answer("⚠️ <b>Укажите ваш Roblox никнейм!</b>\nПример: <code>/link Builderman</code>", parse_mode="HTML")
         return
 
     roblox_username = command.args.strip()
     telegram_links[message.from_user.id] = roblox_username
 
     gold = roblox_gold.get(roblox_username, 0)
+    safe_nick = html.escape(roblox_username)
+    
     await message.answer(
-        f"✅ Успешно привязан Roblox аккаунт: **{roblox_username}**\n\n"
-        f"💰 Текущее сфармленное золото: **{gold}**\n"
-        f"Проверяйте баланс в любой момент командой `/test`.",
-        parse_mode="Markdown"
+        f"✅ Успешно привязан Roblox аккаунт: <b>{safe_nick}</b>\n\n"
+        f"💰 Текущее сфармленное золото: <b>{gold}</b>\n"
+        f"Проверяйте баланс в любой момент командой <code>/test</code>.",
+        parse_mode="HTML"
     )
 
 
@@ -87,16 +86,17 @@ async def cmd_test(message: types.Message):
     if not linked_nick:
         await message.answer(
             "⚠️ Вы еще не привязали ваш Roblox ник!\n"
-            "Напишите: `/link ВашНикRoblox` (например, `/link Player123`).",
-            parse_mode="Markdown"
+            "Напишите: <code>/link ВашНикRoblox</code>",
+            parse_mode="HTML"
         )
         return
 
     gold = roblox_gold.get(linked_nick, 0)
+    safe_nick = html.escape(str(linked_nick))
     await message.answer(
-        f"👤 Аккаунт Roblox: **{linked_nick}**\n"
-        f"💰 Сфармлено золота: **{gold}**",
-        parse_mode="Markdown"
+        f"👤 Аккаунт Roblox: <b>{safe_nick}</b>\n"
+        f"💰 Сфармлено золота: <b>{gold}</b>",
+        parse_mode="HTML"
     )
 
 
@@ -107,11 +107,12 @@ async def cmd_top(message: types.Message):
         return
 
     sorted_top = sorted(roblox_gold.items(), key=lambda x: x[1], reverse=True)[:10]
-    text = "🏆 **Топ игроков по золоту:**\n\n"
+    text = "🏆 <b>Топ игроков по золоту:</b>\n\n"
     for i, (nick, gold) in enumerate(sorted_top, start=1):
-        text += f"{i}. **{nick}**: {gold} 💰\n"
+        safe_nick = html.escape(str(nick))
+        text += f"{i}. <b>{safe_nick}</b>: {gold} 💰\n"
 
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode="HTML")
 
 
 @dp.message()
@@ -120,14 +121,16 @@ async def handle_any_message(message: types.Message):
     linked_nick = telegram_links.get(tg_id)
 
     if linked_nick:
+        safe_nick = html.escape(str(linked_nick))
         gold = roblox_gold.get(linked_nick, 0)
-        gold_info = f"\n👤 Ник: **{linked_nick}**\n💰 Золото: **{gold}**"
+        gold_info = f"\n👤 Ник: <b>{safe_nick}</b>\n💰 Золото: <b>{gold}</b>"
     else:
-        gold_info = "\n⚠️ Ник не привязан. Используйте `/link ВашНик`"
+        gold_info = "\n⚠️ Ник не привязан. Используйте <code>/link ВашНик</code>"
 
+    safe_text = html.escape(message.text or "")
     await message.answer(
-        f"🤖 Бот на связи!\nВы написали: *\"{message.text}\"*{gold_info}",
-        parse_mode="Markdown"
+        f"🤖 Бот на связи!\nВы написали: <i>\"{safe_text}\"</i>{gold_info}",
+        parse_mode="HTML"
     )
 
 
