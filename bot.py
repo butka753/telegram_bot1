@@ -1,21 +1,39 @@
 import asyncio
 import html
+import json
 import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandObject
 from aiohttp import web
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+DATA_FILE = "database.json"
 
 if not TOKEN:
-    print("❌ ОШИБКА: Переменная TELEGRAM_BOT_TOKEN не найдена в Railway!")
+    print("❌ ОШИБКА: Переменная TELEGRAM_BOT_TOKEN не найдена!")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Хранилища данных в памяти
-roblox_gold = {}
-telegram_links = {}
+# --- РАБОТА С ХРАНИЛИЩЕМ (JSON) ---
+def load_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Ошибка при чтении {DATA_FILE}: {e}")
+    return {"gold": {}, "links": {}}
+
+def save_data(data):
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"❌ Ошибка при сохранении {DATA_FILE}: {e}")
+
+# Загружаем базу при старте
+db = load_data()
 
 # --- ПРИЕМ ДАННЫХ ИЗ ROBLOX ---
 async def handle_update_gold(request):
@@ -25,8 +43,9 @@ async def handle_update_gold(request):
         gold = data.get('gold')
 
         if username and gold is not None:
-            roblox_gold[str(username)] = int(gold)
-            print(f"[Roblox] Игрок '{username}': обновлено золото -> {gold}")
+            db["gold"][str(username)] = int(gold)
+            save_data(db)
+            print(f"[Roblox] Игрок '{username}': золото -> {gold}")
             return web.json_response({'status': 'success', 'username': username, 'gold': gold})
         else:
             return web.json_response({'status': 'error', 'message': 'Missing username or gold'}, status=400)
@@ -35,12 +54,12 @@ async def handle_update_gold(request):
         return web.json_response({'status': 'invalid payload'}, status=400)
 
 
-# --- ОБРАБОТЧИКИ TELEGRAM (HTML РАЗМЕТКА) ---
+# --- КОМАНДЫ TELEGRAM ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    tg_id = message.from_user.id
-    linked_nick = telegram_links.get(tg_id)
+    tg_id = str(message.from_user.id)
+    linked_nick = db["links"].get(tg_id)
 
     msg = (
         "👋 <b>Привет! Я бот для отслеживания фарма в Roblox.</b>\n\n"
@@ -66,9 +85,12 @@ async def cmd_link(message: types.Message, command: CommandObject):
         return
 
     roblox_username = command.args.strip()
-    telegram_links[message.from_user.id] = roblox_username
+    tg_id = str(message.from_user.id)
+    
+    db["links"][tg_id] = roblox_username
+    save_data(db)
 
-    gold = roblox_gold.get(roblox_username, 0)
+    gold = db["gold"].get(roblox_username, 0)
     safe_nick = html.escape(roblox_username)
     
     await message.answer(
@@ -81,8 +103,8 @@ async def cmd_link(message: types.Message, command: CommandObject):
 
 @dp.message(Command("test", "mygold"))
 async def cmd_test(message: types.Message):
-    tg_id = message.from_user.id
-    linked_nick = telegram_links.get(tg_id)
+    tg_id = str(message.from_user.id)
+    linked_nick = db["links"].get(tg_id)
 
     if not linked_nick:
         await message.answer(
@@ -92,7 +114,7 @@ async def cmd_test(message: types.Message):
         )
         return
 
-    gold = roblox_gold.get(linked_nick, 0)
+    gold = db["gold"].get(linked_nick, 0)
     safe_nick = html.escape(str(linked_nick))
     await message.answer(
         f"👤 Аккаунт Roblox: <b>{safe_nick}</b>\n"
@@ -103,11 +125,11 @@ async def cmd_test(message: types.Message):
 
 @dp.message(Command("top"))
 async def cmd_top(message: types.Message):
-    if not roblox_gold:
+    if not db["gold"]:
         await message.answer("📊 Данных о золоте пока нет.")
         return
 
-    sorted_top = sorted(roblox_gold.items(), key=lambda x: x[1], reverse=True)[:10]
+    sorted_top = sorted(db["gold"].items(), key=lambda x: x[1], reverse=True)[:10]
     text = "🏆 <b>Топ игроков по золоту:</b>\n\n"
     for i, (nick, gold) in enumerate(sorted_top, start=1):
         safe_nick = html.escape(str(nick))
@@ -118,12 +140,12 @@ async def cmd_top(message: types.Message):
 
 @dp.message()
 async def handle_any_message(message: types.Message):
-    tg_id = message.from_user.id
-    linked_nick = telegram_links.get(tg_id)
+    tg_id = str(message.from_user.id)
+    linked_nick = db["links"].get(tg_id)
 
     if linked_nick:
         safe_nick = html.escape(str(linked_nick))
-        gold = roblox_gold.get(linked_nick, 0)
+        gold = db["gold"].get(linked_nick, 0)
         gold_info = f"\n👤 Ник: <b>{safe_nick}</b>\n💰 Золото: <b>{gold}</b>"
     else:
         gold_info = "\n⚠️ Ник не привязан. Используйте <code>/link ВашНик</code>"
@@ -135,7 +157,7 @@ async def handle_any_message(message: types.Message):
     )
 
 
-# --- ЗАПУСК СЕРВЕРА И БОТА ---
+# --- ЗАПУСК ---
 async def main():
     app = web.Application()
     app.router.add_post('/update-gold', handle_update_gold)
@@ -147,14 +169,16 @@ async def main():
     await site.start()
     print(f"✅ HTTP-сервер запущен на порту {port}")
 
+    # Удаляем вебхуки и сбрасываем очереди, чтобы избежать ошибок
+    await bot.delete_webhook(drop_pending_updates=True)
+    
     try:
         me = await bot.get_me()
         print(f"✅ Бот успешно подключен к Telegram: @{me.username}")
     except Exception as e:
-        print(f"❌ Ошибка подключения к Telegram: {e}")
+        print(f"❌ Ошибка подключения: {e}")
 
-    await bot.delete_webhook(drop_pending_updates=True)
-    print("🚀 Бот полностью запущен и ожидает сообщений!")
+    print("🚀 Бот запущен!")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
