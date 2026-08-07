@@ -52,7 +52,7 @@ async def cmd_test(message: types.Message):
 async def handle_any_message(message: types.Message):
     print(f"[Telegram] Сообщение: '{message.text}' от @{message.from_user.username}")
     await message.answer(
-        f"🤖 Бот на связи!\n Вы написали: *\"{message.text}\"*\n"
+        f"🤖 Бот на связи!\nВы написали: *\"{message.text}\"*\n"
         f"💰 Текущее золото: **{current_gold}**",
         parse_mode="Markdown"
     )
@@ -61,7 +61,6 @@ async def handle_any_message(message: types.Message):
 # --- ЗАПУСК СЕРВЕРА И БОТА ---
 async def main():
     app = web.Application()
-    # Правильная регистрация URL-эндпоинта без опечаток
     app.router.add_post('/update-gold', handle_update_gold)
     
     port = int(os.environ.get("PORT", 8080))
