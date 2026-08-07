@@ -7,14 +7,14 @@ from aiohttp import web
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not TOKEN:
-    print("❌ ОШИБКА: Переменная TELEGRAM_BOT_TOKEN не найдена в окружении!")
+    print("❌ ОШИБКА: Переменная TELEGRAM_BOT_TOKEN не найдена в Railway!")
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+dp = Dispatcher()  # СТРОГО БЕЗ bot В СКОБКАХ
 
 current_gold = 0
 
-# Обработчик POST-запроса от Roblox
+# Прием данных из Roblox
 async def handle_update_gold(request):
     global current_gold
     try:
@@ -24,13 +24,13 @@ async def handle_update_gold(request):
             print(f"[Roblox] Обновлено золото: {current_gold}")
             return web.json_response({'status': 'success'})
     except Exception as e:
-        print(f"[Roblox] Ошибка приеме данных: {e}")
+        print(f"[Roblox] Ошибка приема данных: {e}")
     return web.json_response({'status': 'invalid payload'}, status=400)
 
 # Команда /test в Telegram
 @dp.message(Command("test"))
 async def handle_test(message: types.Message):
-    print(f"[Telegram] Получена команда /test от user_id={message.from_user.id}")
+    print(f"[Telegram] Получена команда /test от ID: {message.from_user.id}")
     await message.answer(f"💰 Сфармлено золота: {current_gold}")
 
 async def main():
@@ -45,7 +45,6 @@ async def main():
     await site.start()
     print(f"✅ HTTP-сервер запущен на порту {port}")
     
-    # Удаляем старые вебхуки и сбрасываем очереди, если они зависли
     await bot.delete_webhook(drop_pending_updates=True)
     print("✅ Бот готов принимать сообщения в Telegram!")
     
