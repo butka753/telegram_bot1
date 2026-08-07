@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiohttp import web
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TOKEN = os.getenv("8933124557:AAF_Z54A1rSlAfVOwanbhfDwNCCpfYWJLaY")
 
 if not TOKEN:
     print("❌ ОШИБКА: Переменная TELEGRAM_BOT_TOKEN не найдена в Railway!")
