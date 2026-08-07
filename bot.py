@@ -1,25 +1,25 @@
+import asyncio
 import os
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from aiogram import Bot, Dispatcher, types
 
-BOT_TOKEN = os.getenv("8875824495:AAGcaII9dC54zhTvfgbxCsgj7JIizZpThjc")
+TOKEN = os.getenv("8875824495:AAGcaII9dC54zhTvfgbxCsgj7JIizZpThjc")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет!")
+if not TOKEN:
+    raise ValueError("Токен не найден! Добавь переменную TELEGRAM_BOT_TOKEN в Railway")
 
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    
-    # Railway дает порт через переменную PORT
-    port = int(os.getenv("PORT", 8080))
-    
-    # Запускаем веб-хук для Railway
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        webhook_url=f"https://{os.getenv('RAILWAY_STATIC_URL')}/webhook"
-    )
+bot = Bot(token=TOKEN)
+dp = Dispatcher(bot)
+
+@dp.message_handler(commands=['start'])
+async def start(message: types.Message):
+    await message.answer("Привет! Я работаю!")
+
+@dp.message_handler()
+async def echo(message: types.Message):
+    await message.answer(f"Ты написал: {message.text}")
+
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
