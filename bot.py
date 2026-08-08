@@ -33,6 +33,11 @@ cooldown = {}
 # Словарь для хранения состояния ожидания ставки
 waiting_for_bet = {}
 
+# --- Настройки КД ---
+COOLDOWN_DICE = 4       # Кости - 4 секунды
+COOLDOWN_CASINO = 4     # Казино - 4 секунды
+COOLDOWN_BASKETBALL = 10 # Баскетбол - 10 секунд
+
 # --- Функции для работы с базой данных ---
 
 def load_data():
@@ -54,6 +59,41 @@ def update_user_score(user_id: int, points: int):
     user_id_str = str(user_id)
     data["users"][user_id_str] = data["users"].get(user_id_str, 0) + points
     save_data(data)
+
+# --- Функция проверки КД ---
+
+def check_cooldown(user_id: int, game_type: str) -> tuple:
+    """Проверяет КД для игры. Возвращает (можно_играть, оставшиеся_секунды)"""
+    now = datetime.now()
+    
+    if user_id not in cooldown:
+        return True, 0
+    
+    # Получаем время последнего нажатия для этой игры
+    last_time = cooldown[user_id].get(game_type, datetime.min)
+    time_diff = (now - last_time).total_seconds()
+    
+    # Выбираем КД в зависимости от игры
+    if game_type == "dice":
+        cooldown_time = COOLDOWN_DICE
+    elif game_type == "casino":
+        cooldown_time = COOLDOWN_CASINO
+    elif game_type == "basketball":
+        cooldown_time = COOLDOWN_BASKETBALL
+    else:
+        cooldown_time = 4
+    
+    if time_diff < cooldown_time:
+        remaining = cooldown_time - time_diff
+        return False, remaining
+    
+    return True, 0
+
+def update_cooldown(user_id: int, game_type: str):
+    """Обновляет время последнего нажатия для игры"""
+    if user_id not in cooldown:
+        cooldown[user_id] = {}
+    cooldown[user_id][game_type] = datetime.now()
 
 # --- Команды ---
 
@@ -162,21 +202,34 @@ async def play_casino(message: types.Message, user_id: int, bet: int, menu_messa
     multiplier = 0
     result_text = ""
     
-    if value == 6:
+    # Логика казино с 7-кой
+    if value == 6:  # 777 (джекпот)
         multiplier = 3
         points = bet * multiplier
         result_text = f"🎰 ДЖЕКПОТ! 777!\n💰 Ставка: {bet} x{multiplier} = +{points} очков!"
-    elif value == 5:
+    elif value == 5:  # Три одинаковых (555)
         multiplier = 1.5
         points = int(bet * multiplier)
         result_text = f"🎰 Три одинаковых! {value}{value}{value}\n💰 Ставка: {bet} x{multiplier} = +{points} очков!"
-    elif value == 4:
+    elif value == 4:  # Три одинаковых (444)
         multiplier = 1.5
         points = int(bet * multiplier)
         result_text = f"🎰 Три одинаковых! {value}{value}{value}\n💰 Ставка: {bet} x{multiplier} = +{points} очков!"
+    elif value == 7:  # Если вдруг выпала 7 (но в dice значения только 1-6)
+        # На всякий случай, если телеграм изменит логику
+        multiplier = 0.3
+        points = int(bet * multiplier)
+        result_text = f"🎰 Выпала 7!\n💰 Возврат: {bet} x{multiplier} = +{points} очков!"
     else:
-        result_text = f"🎰 Выпало: {value}\n😕 Ты проиграл {bet} очков!"
-        points = -bet
+        # Проверяем, есть ли хоть одна 7 в значении (для эмуляции)
+        # В телеграм dice для казино выдаёт значения 1-6, поэтому 7 эмулируем через value == 1
+        if value == 1:  # Эмулируем выпадение 7 (утешительный приз)
+            multiplier = 0.3
+            points = int(bet * multiplier)
+            result_text = f"🎰 Выпало: {value} (повезло!)\n💰 Возврат: {bet} x{multiplier} = +{points} очков!"
+        else:
+            result_text = f"🎰 Выпало: {value}\n😕 Ты проиграл {bet} очков!"
+            points = -bet
     
     update_user_score(user_id, points)
     new_score = get_user_score(user_id)
@@ -215,38 +268,40 @@ async def process_callback(callback: types.CallbackQuery):
     if game == "main_menu":
         await callback.answer()
         score = get_user_score(user_id)
+        
         keyboard = [
             [InlineKeyboardButton(text="🎲 Кости", callback_data="dice")],
             [InlineKeyboardButton(text="🎰 Казино", callback_data="casino")],
             [InlineKeyboardButton(text="🏀 Баскетбол", callback_data="basketball")],
         ]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        
         await callback.message.answer(
-            f"🎮 Главное меню\n\n💰 Твой счёт: {score} очков.\n\nВыбери игру:",
+            f"🎮 Привет, {callback.from_user.first_name}!\n"
+            f"💰 Твой счёт: {score} очков.\n\n"
+            f"Выбери игру:",
             reply_markup=reply_markup
         )
-        # Удаляем сообщение с кнопками
+        
         await callback.message.delete()
         return
     
     # --- КНОПКА "ЕЩЁ РАЗ?" ДЛЯ КАЗИНО ---
     if game == "casino_again":
-        now = datetime.now()
-        if user_id in cooldown:
-            time_diff = (now - cooldown[user_id]).total_seconds()
-            if time_diff < 4:
-                remaining = 4 - time_diff
-                await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
-                return
+        # Проверяем КД для казино
+        can_play, remaining = check_cooldown(user_id, "casino")
+        if not can_play:
+            await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
+            return
         
-        cooldown[user_id] = now
+        update_cooldown(user_id, "casino")
+        
         current_score = get_user_score(user_id)
         
         if current_score <= 0:
             await callback.answer("❌ У тебя 0 очков!", show_alert=True)
             return
         
-        # Удаляем сообщение с кнопками
         await callback.message.delete()
         
         waiting_for_bet[user_id] = {
@@ -268,6 +323,7 @@ async def process_callback(callback: types.CallbackQuery):
             f"💡 Правила:\n"
             f"• 777 (6) → x3\n"
             f"• Три одинаковых (4-5) → x1.5\n"
+            f"• 7 (1) → возврат x0.3\n"
             f"• Остальное → проигрыш\n\n"
             f"✏️ Введи число в чат:",
             reply_markup=cancel_keyboard
@@ -276,32 +332,28 @@ async def process_callback(callback: types.CallbackQuery):
     
     # --- КНОПКА "ЕЩЁ РАЗ?" ДЛЯ КОСТЕЙ ---
     if game == "dice_again":
-        now = datetime.now()
-        if user_id in cooldown:
-            time_diff = (now - cooldown[user_id]).total_seconds()
-            if time_diff < 4:
-                remaining = 4 - time_diff
-                await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
-                return
+        # Проверяем КД для костей
+        can_play, remaining = check_cooldown(user_id, "dice")
+        if not can_play:
+            await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
+            return
         
-        cooldown[user_id] = now
-        # Удаляем сообщение с кнопками
+        update_cooldown(user_id, "dice")
+        
         await callback.message.delete()
         await play_dice(callback, user_id)
         return
     
     # --- КНОПКА "ЕЩЁ РАЗ?" ДЛЯ БАСКЕТБОЛА ---
     if game == "basketball_again":
-        now = datetime.now()
-        if user_id in cooldown:
-            time_diff = (now - cooldown[user_id]).total_seconds()
-            if time_diff < 4:
-                remaining = 4 - time_diff
-                await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
-                return
+        # Проверяем КД для баскетбола (10 секунд)
+        can_play, remaining = check_cooldown(user_id, "basketball")
+        if not can_play:
+            await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
+            return
         
-        cooldown[user_id] = now
-        # Удаляем сообщение с кнопками
+        update_cooldown(user_id, "basketball")
+        
         await callback.message.delete()
         await play_basketball(callback, user_id)
         return
@@ -315,16 +367,29 @@ async def process_callback(callback: types.CallbackQuery):
         await callback.message.delete()
         return
     
-    # --- КД ДЛЯ ОСНОВНЫХ ИГР ---
-    now = datetime.now()
-    if user_id in cooldown:
-        time_diff = (now - cooldown[user_id]).total_seconds()
-        if time_diff < 4:
-            remaining = 4 - time_diff
-            await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
-            return
+    # --- ОСНОВНЫЕ ИГРЫ ИЗ МЕНЮ ---
     
-    cooldown[user_id] = now
+    # Определяем тип игры для КД
+    if game == "dice":
+        game_type = "dice"
+        cooldown_time = COOLDOWN_DICE
+    elif game == "casino":
+        game_type = "casino"
+        cooldown_time = COOLDOWN_CASINO
+    elif game == "basketball":
+        game_type = "basketball"
+        cooldown_time = COOLDOWN_BASKETBALL
+    else:
+        game_type = "unknown"
+        cooldown_time = 4
+    
+    # Проверяем КД
+    can_play, remaining = check_cooldown(user_id, game_type)
+    if not can_play:
+        await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
+        return
+    
+    update_cooldown(user_id, game_type)
     
     print(f"🔔 Нажата кнопка: {game} от {user_id}")
     
@@ -358,6 +423,7 @@ async def process_callback(callback: types.CallbackQuery):
                  f"💡 Правила:\n"
                  f"• 777 (6) → x3\n"
                  f"• Три одинаковых (4-5) → x1.5\n"
+                 f"• 7 (1) → возврат x0.3\n"
                  f"• Остальное → проигрыш\n\n"
                  f"✏️ Введи число в чат:",
             reply_markup=cancel_keyboard
@@ -465,8 +531,13 @@ async def play_basketball(callback: types.CallbackQuery, user_id: int):
 async def main():
     print("🤖 Бот запущен!")
     print("📁 Данные в:", DATA_FILE)
-    print("⏳ КД: 4 секунды")
+    print("⏳ КД:")
+    print(f"   🎲 Кости - {COOLDOWN_DICE} секунд")
+    print(f"   🎰 Казино - {COOLDOWN_CASINO} секунд")
+    print(f"   🏀 Баскетбол - {COOLDOWN_BASKETBALL} секунд")
+    print("🎰 Казино: 777 (6) → x3, Три одинаковых (4-5) → x1.5, 7 (1) → возврат x0.3")
     print("✅ Кнопки ПОД ЭМОДЗИ в чате")
+    print("✅ Кнопка 'Выбрать другое' открывает меню как /start")
     
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
