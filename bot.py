@@ -4,7 +4,7 @@ import os
 import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ForceReply
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime, timedelta
 
 # --- Получение и очистка токена ---
@@ -60,7 +60,7 @@ def update_user_score(user_id: int, points: int):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
-    score = get_user_score(user_id)
+    score = get_user_score(user_id)  # Очки НЕ сбрасываются
     
     keyboard = [
         [InlineKeyboardButton(text="🎲 Кости", callback_data="dice")],
@@ -130,8 +130,10 @@ async def handle_bet(message: types.Message):
     if user_id not in waiting_for_bet:
         return
     
-    # Получаем сообщение с меню, которое нужно будет обновить
-    menu_message_id = waiting_for_bet[user_id]
+    # Получаем данные о ставке
+    bet_data = waiting_for_bet[user_id]
+    menu_message_id = bet_data["menu_message_id"]
+    original_message_id = bet_data["original_message_id"]
     
     try:
         # Пытаемся преобразовать текст в число
@@ -152,65 +154,67 @@ async def handle_bet(message: types.Message):
         del waiting_for_bet[user_id]
         
         # Запускаем игру в казино со ставкой
-        await play_casino(message, user_id, bet, menu_message_id)
+        await play_casino(message, user_id, bet, menu_message_id, original_message_id)
         
     except ValueError:
         await message.reply("❌ Введи число! Например: 10")
 
 # --- Функция игры в казино ---
 
-async def play_casino(message: types.Message, user_id: int, bet: int, menu_message_id: int):
+async def play_casino(message: types.Message, user_id: int, bet: int, menu_message_id: int, original_message_id: int):
     # Отправляем анимированный слот
     slot_message = await message.answer_dice(emoji="🎰")
-    value = slot_message.dice.value  # 1-6 для слота
+    value = slot_message.dice.value
     
-    # Ждём окончания анимации (примерно 3-4 секунды)
+    # Ждём окончания анимации
     await asyncio.sleep(3.5)
     
     points = 0
     multiplier = 0
     result_text = ""
+    chat_result = ""
     
-    # Логика казино:
-    # value 1-6 (эмуляция 777)
+    # Логика казино
     if value == 6:  # 777 (джекпот)
         multiplier = 3
         points = bet * multiplier
-        result_text = f"🎰 ДЖЕКПОТ! 777!\n"
-        result_text += f"💰 Ставка: {bet} x{multiplier} = +{points} очков!"
-    elif value == 5:  # Три одинаковых (например, 555)
+        result_text = f"🎰 ДЖЕКПОТ! 777!\n💰 Ставка: {bet} x{multiplier} = +{points} очков!"
+        chat_result = f"🎰 ДЖЕКПОТ! Ты выиграл {points} очков (ставка {bet} x{multiplier})!"
+    elif value == 5:  # Три одинаковых
         multiplier = 1.5
         points = int(bet * multiplier)
-        result_text = f"🎰 Три одинаковых! {value}{value}{value}\n"
-        result_text += f"💰 Ставка: {bet} x{multiplier} = +{points} очков!"
-    elif value == 4:  # Три одинаковых (444)
+        result_text = f"🎰 Три одинаковых! {value}{value}{value}\n💰 Ставка: {bet} x{multiplier} = +{points} очков!"
+        chat_result = f"🎰 Три одинаковых! Ты выиграл {points} очков (ставка {bet} x{multiplier})!"
+    elif value == 4:  # Три одинаковых
         multiplier = 1.5
         points = int(bet * multiplier)
-        result_text = f"🎰 Три одинаковых! {value}{value}{value}\n"
-        result_text += f"💰 Ставка: {bet} x{multiplier} = +{points} очков!"
+        result_text = f"🎰 Три одинаковых! {value}{value}{value}\n💰 Ставка: {bet} x{multiplier} = +{points} очков!"
+        chat_result = f"🎰 Три одинаковых! Ты выиграл {points} очков (ставка {bet} x{multiplier})!"
     else:
-        result_text = f"🎰 Выпало: {value}\n"
-        result_text += f"😕 Ты проиграл {bet} очков!"
+        result_text = f"🎰 Выпало: {value}\n😕 Ты проиграл {bet} очков!"
+        chat_result = f"🎰 Выпало: {value}\n😕 Ты проиграл {bet} очков!"
         points = -bet
     
     # Обновляем счёт
     update_user_score(user_id, points)
     new_score = get_user_score(user_id)
     
-    # Обновляем меню (кнопки)
+    # Кнопки "Ещё раз?" и "Выбрать другое"
     keyboard = [
-        [InlineKeyboardButton(text="🎲 Кости", callback_data="dice")],
-        [InlineKeyboardButton(text="🎰 Казино", callback_data="casino")],
-        [InlineKeyboardButton(text="🏀 Баскетбол", callback_data="basketball")],
+        [InlineKeyboardButton(text="🎰 Ещё раз?", callback_data="casino_again")],
+        [InlineKeyboardButton(text="📋 Выбрать другое", callback_data="main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Редактируем исходное сообщение с меню
+    # Отправляем сообщение в чат
+    await message.answer(f"{chat_result}\n💰 Твой счёт: {new_score} очков.")
+    
+    # Редактируем исходное меню
     try:
         await bot.edit_message_text(
             chat_id=message.chat.id,
             message_id=menu_message_id,
-            text=f"🎰 КАЗИНО 🎰\n\n{result_text}\n\n💰 Твой счёт: {new_score} очков.\n\nВыбери следующую игру:",
+            text=f"🎰 КАЗИНО 🎰\n\n{result_text}\n\n💰 Твой счёт: {new_score} очков.",
             reply_markup=reply_markup
         )
     except Exception as e:
@@ -223,6 +227,67 @@ async def process_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     game = callback.data
     
+    # Обработка кнопки "Выбрать другое"
+    if game == "main_menu":
+        await callback.answer()
+        score = get_user_score(user_id)
+        keyboard = [
+            [InlineKeyboardButton(text="🎲 Кости", callback_data="dice")],
+            [InlineKeyboardButton(text="🎰 Казино", callback_data="casino")],
+            [InlineKeyboardButton(text="🏀 Баскетбол", callback_data="basketball")],
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        await callback.message.edit_text(
+            text=f"🎮 Главное меню\n\n💰 Твой счёт: {score} очков.\n\nВыбери игру:",
+            reply_markup=reply_markup
+        )
+        return
+    
+    # Обработка кнопки "Ещё раз?" для казино
+    if game == "casino_again":
+        # Проверяем КД
+        now = datetime.now()
+        if user_id in cooldown:
+            time_diff = (now - cooldown[user_id]).total_seconds()
+            if time_diff < 4:
+                remaining = 4 - time_diff
+                await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
+                return
+        
+        cooldown[user_id] = now
+        current_score = get_user_score(user_id)
+        
+        if current_score <= 0:
+            await callback.answer("❌ У тебя 0 очков! Сыграй в другие игры.", show_alert=True)
+            return
+        
+        # Сохраняем ID сообщения
+        waiting_for_bet[user_id] = {
+            "menu_message_id": callback.message.message_id,
+            "original_message_id": callback.message.message_id
+        }
+        
+        await callback.answer()
+        
+        cancel_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_bet")]
+            ]
+        )
+        
+        await callback.message.edit_text(
+            text=f"🎰 КАЗИНО 🎰\n\n"
+                 f"💰 Твой счёт: {current_score} очков.\n"
+                 f"📝 Напиши количество очков, которое хочешь поставить.\n\n"
+                 f"💡 Правила:\n"
+                 f"• 777 (6) → x3\n"
+                 f"• Три одинаковых (4-5) → x1.5\n"
+                 f"• Остальное → проигрыш\n\n"
+                 f"✏️ Введи число в чат:",
+            reply_markup=cancel_keyboard
+        )
+        return
+    
     # --- Проверка КД (4 секунды) ---
     now = datetime.now()
     if user_id in cooldown:
@@ -232,7 +297,6 @@ async def process_callback(callback: types.CallbackQuery):
             await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
             return
     
-    # Обновляем время последнего нажатия
     cooldown[user_id] = now
     
     print(f"🔔 Нажата кнопка: {game} от пользователя {user_id}")
@@ -240,6 +304,7 @@ async def process_callback(callback: types.CallbackQuery):
     current_score = get_user_score(user_id)
     points = 0
     result_text = ""
+    chat_result = ""
     
     # --- ИГРА В КОСТИ ---
     if game == "dice":
@@ -247,7 +312,6 @@ async def process_callback(callback: types.CallbackQuery):
         dice_message = await callback.message.answer_dice(emoji="🎲")
         value = dice_message.dice.value
         
-        # Ждём окончания анимации
         await asyncio.sleep(3.5)
         
         dice_emoji = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
@@ -256,40 +320,53 @@ async def process_callback(callback: types.CallbackQuery):
         if value == 6:
             points = 2
             result_text += "\n🎉 Поздравляю! Ты выиграл 2 очка!"
+            chat_result = f"🎲 Выпало: {dice_emoji[value]} ({value})\n🎉 Ты выиграл 2 очка!"
         else:
             result_text += "\n😕 Попробуй ещё раз!"
+            chat_result = f"🎲 Выпало: {dice_emoji[value]} ({value})\n😕 Ты ничего не выиграл!"
         
-        # Обновляем счёт
         if points > 0:
             update_user_score(user_id, points)
             new_score = get_user_score(user_id)
         else:
             new_score = current_score
         
+        # Кнопки
+        keyboard = [
+            [InlineKeyboardButton(text="🎲 Ещё раз?", callback_data="dice_again")],
+            [InlineKeyboardButton(text="📋 Выбрать другое", callback_data="main_menu")],
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        
+        # Отправляем в чат
+        await callback.message.answer(f"{chat_result}\n💰 Твой счёт: {new_score} очков.")
+        
         # Обновляем меню
-        await update_menu(callback, result_text, new_score)
+        await callback.answer()
+        await callback.message.edit_text(
+            text=f"{result_text}\n\n💰 Твой счёт: {new_score} очков.",
+            reply_markup=reply_markup
+        )
     
-    # --- ИГРА В КАЗИНО (сначала запрашиваем ставку) ---
+    # --- ИГРА В КАЗИНО ---
     elif game == "casino":
-        # Проверяем, есть ли очки для ставки
         if current_score <= 0:
             await callback.answer("❌ У тебя 0 очков! Сыграй в другие игры.", show_alert=True)
             return
         
-        # Сохраняем ID сообщения, чтобы потом обновить
-        waiting_for_bet[user_id] = callback.message.message_id
+        waiting_for_bet[user_id] = {
+            "menu_message_id": callback.message.message_id,
+            "original_message_id": callback.message.message_id
+        }
         
-        # Отвечаем на callback
         await callback.answer()
         
-        # Создаём клавиатуру с кнопкой отмены
         cancel_keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_bet")]
             ]
         )
         
-        # Редактируем меню, показываем запрос ставки
         await callback.message.edit_text(
             text=f"🎰 КАЗИНО 🎰\n\n"
                  f"💰 Твой счёт: {current_score} очков.\n"
@@ -304,28 +381,52 @@ async def process_callback(callback: types.CallbackQuery):
     
     # --- ИГРА В БАСКЕТБОЛ ---
     elif game == "basketball":
-        # Отправляем анимированный баскетбол
         basket_message = await callback.message.answer_dice(emoji="🏀")
         value = basket_message.dice.value
         
-        # Ждём окончания анимации
         await asyncio.sleep(3.5)
         
-        if value >= 4:  # Попадание
+        if value >= 4:
             points = 2
             result_text = "🏀🏆 Ты попал в корзину! +2 очка!"
+            chat_result = "🏀🏆 Ты попал в корзину! +2 очка!"
         else:
             result_text = "🏀❌ Промах! Попробуй ещё раз."
+            chat_result = "🏀❌ Промах! Ты ничего не выиграл!"
         
-        # Обновляем счёт
         if points > 0:
             update_user_score(user_id, points)
             new_score = get_user_score(user_id)
         else:
             new_score = current_score
         
+        # Кнопки
+        keyboard = [
+            [InlineKeyboardButton(text="🏀 Ещё раз?", callback_data="basketball_again")],
+            [InlineKeyboardButton(text="📋 Выбрать другое", callback_data="main_menu")],
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        
+        # Отправляем в чат
+        await callback.message.answer(f"{chat_result}\n💰 Твой счёт: {new_score} очков.")
+        
         # Обновляем меню
-        await update_menu(callback, result_text, new_score)
+        await callback.answer()
+        await callback.message.edit_text(
+            text=f"{result_text}\n\n💰 Твой счёт: {new_score} очков.",
+            reply_markup=reply_markup
+        )
+    
+    # --- КНОПКА "Ещё раз?" для костей ---
+    elif game == "dice_again":
+        # Имитируем нажатие на кости
+        callback.data = "dice"
+        await process_callback(callback)
+    
+    # --- КНОПКА "Ещё раз?" для баскетбола ---
+    elif game == "basketball_again":
+        callback.data = "basketball"
+        await process_callback(callback)
     
     # --- ОТМЕНА СТАВКИ ---
     elif game == "cancel_bet":
@@ -348,22 +449,6 @@ async def process_callback(callback: types.CallbackQuery):
             reply_markup=reply_markup
         )
 
-# --- Функция обновления меню ---
-
-async def update_menu(callback: types.CallbackQuery, result_text: str, new_score: int):
-    keyboard = [
-        [InlineKeyboardButton(text="🎲 Кости", callback_data="dice")],
-        [InlineKeyboardButton(text="🎰 Казино", callback_data="casino")],
-        [InlineKeyboardButton(text="🏀 Баскетбол", callback_data="basketball")],
-    ]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await callback.answer()
-    await callback.message.edit_text(
-        text=f"{result_text}\n\n💰 Твой счёт: {new_score} очков.\n\nВыбери следующую игру:",
-        reply_markup=reply_markup
-    )
-
 # --- ЗАПУСК ---
 
 async def main():
@@ -372,11 +457,9 @@ async def main():
     print("🔄 Начинаем polling...")
     print("⏳ КД между нажатиями: 4 секунды")
     print("🎰 Казино работает со ставками (x3 за 777, x1.5 за три одинаковых)")
+    print("✅ /start НЕ сбрасывает очки")
     
-    # Удаляем старый webhook (если был)
     await bot.delete_webhook(drop_pending_updates=True)
-    
-    # Запускаем polling
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
