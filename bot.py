@@ -5,6 +5,7 @@ import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime, timedelta
 
 # --- Получение и очистка токена ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -25,6 +26,9 @@ print(f"✅ Токен получен: {TOKEN[:10]}...{TOKEN[-5:]}")
 DATA_FILE = "database.json"
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+# Словарь для хранения времени последнего нажатия (КД)
+cooldown = {}
 
 # --- Функции для работы с базой данных ---
 
@@ -120,14 +124,31 @@ async def process_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     game = callback.data
     
-    print(f"🔔 Нажата кнопка: {game} от пользователя {user_id}")  # Отладка
+    # --- Проверка КД (3 секунды) ---
+    now = datetime.now()
+    if user_id in cooldown:
+        time_diff = (now - cooldown[user_id]).total_seconds()
+        if time_diff < 3:
+            remaining = 3 - time_diff
+            await callback.answer(f"⏳ Подожди {remaining:.1f} сек!", show_alert=False)
+            return
+    
+    # Обновляем время последнего нажатия
+    cooldown[user_id] = now
+    
+    print(f"🔔 Нажата кнопка: {game} от пользователя {user_id}")
     
     current_score = get_user_score(user_id)
     points = 0
     result_text = ""
+    emoji_message = None
     
+    # --- ИГРА В КОСТИ (с реальным эмодзи) ---
     if game == "dice":
-        value = random.randint(1, 6)
+        # Отправляем анимированный кубик
+        dice_message = await callback.message.answer_dice(emoji="🎲")
+        value = dice_message.dice.value
+        
         dice_emoji = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
         result_text = f"🎲 Выпало: {dice_emoji[value]} ({value})"
         
@@ -137,26 +158,41 @@ async def process_callback(callback: types.CallbackQuery):
         else:
             result_text += "\n😕 Попробуй ещё раз!"
             
+    # --- ИГРА В КАЗИНО (слот) ---
     elif game == "casino":
-        value = random.randint(0, 9)
+        # Отправляем анимированный слот
+        slot_message = await callback.message.answer_dice(emoji="🎰")
+        value = slot_message.dice.value  # 1-6 для слота (или другое значение)
+        
+        # Для слота значения от 1 до 6, эмулируем 777
+        # Если выпало 6 - считаем как 777
         result_text = f"🎰 Результат: {value}"
         
-        if value == 7:
+        if value == 6:  # Джекпот (эмуляция 777)
             points = 10
             result_text += "\n🎉 ДЖЕКПОТ! Ты выиграл 10 очков!"
-        elif value % 2 == 0 and value != 0:
-            points = 1
-            result_text += "\n✨ Бонус за чётное число: +1 очко."
+        elif value >= 4:  # Хороший результат
+            points = 2
+            result_text += "\n✨ Хороший результат! +2 очка."
         else:
             result_text += "\n😕 Не повезло, попробуй ещё!"
             
+    # --- ИГРА В БАСКЕТБОЛ ---
     elif game == "basketball":
-        if random.random() < 0.6:
+        # Отправляем анимированный баскетбол
+        basket_message = await callback.message.answer_dice(emoji="🏀")
+        value = basket_message.dice.value  # 1-6 для баскетбола
+        
+        # В баскетболе значение 4-6 - попадание, 1-3 - промах
+        result_text = f"🏀 Бросок..."
+        
+        if value >= 4:  # Попадание
             points = 2
             result_text = "🏀🏆 Ты попал в корзину! +2 очка!"
         else:
             result_text = "🏀❌ Промах! Попробуй ещё раз."
     
+    # Обновляем счёт
     if points > 0:
         update_user_score(user_id, points)
         new_score = get_user_score(user_id)
@@ -171,21 +207,22 @@ async def process_callback(callback: types.CallbackQuery):
     ]
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Отвечаем на callback (обязательно!)
+    # Отвечаем на callback
     await callback.answer()
     
-    # Редактируем сообщение
+    # Редактируем исходное сообщение (меню)
     await callback.message.edit_text(
         text=f"{result_text}\n\n💰 Твой счёт: {new_score} очков.\n\nВыбери следующую игру:",
         reply_markup=reply_markup
     )
 
-# --- ЗАПУСК (ТОЛЬКО POLLING) ---
+# --- ЗАПУСК ---
 
 async def main():
     print("🤖 Бот запущен на Railway с ПОЛЛИНГОМ!")
     print("📁 Данные сохраняются в:", DATA_FILE)
     print("🔄 Начинаем polling...")
+    print("⏳ КД между нажатиями: 3 секунды")
     
     # Удаляем старый webhook (если был)
     await bot.delete_webhook(drop_pending_updates=True)
