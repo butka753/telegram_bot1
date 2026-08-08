@@ -5,15 +5,24 @@ import random
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiohttp import web
 
+# --- Получение и очистка токена ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DATA_FILE = "database.json"
 
 if not TOKEN:
     print("❌ ОШИБКА: Переменная TELEGRAM_BOT_TOKEN не найдена!")
-    exit()
+    exit(1)
 
+TOKEN = TOKEN.strip()
+
+if len(TOKEN) < 30:
+    print(f"❌ ОШИБКА: Токен слишком короткий ({len(TOKEN)} символов)")
+    exit(1)
+
+print(f"✅ Токен получен: {TOKEN[:10]}...{TOKEN[-5:]}")
+
+# --- Инициализация ---
+DATA_FILE = "database.json"
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
@@ -104,12 +113,14 @@ async def cmd_reset(message: types.Message):
     else:
         await message.answer("❌ У тебя и так 0 очков!")
 
-# --- Обработчик игр ---
+# --- Обработчик игр (КНОПКИ) ---
 
 @dp.callback_query()
 async def process_callback(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     game = callback.data
+    
+    print(f"🔔 Нажата кнопка: {game} от пользователя {user_id}")  # Отладка
     
     current_score = get_user_score(user_id)
     points = 0
@@ -152,6 +163,7 @@ async def process_callback(callback: types.CallbackQuery):
     else:
         new_score = current_score
     
+    # Обновляем клавиатуру
     keyboard = [
         [InlineKeyboardButton(text="🎲 Кости", callback_data="dice")],
         [InlineKeyboardButton(text="🎰 Казино", callback_data="casino")],
@@ -159,64 +171,27 @@ async def process_callback(callback: types.CallbackQuery):
     ]
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
+    # Отвечаем на callback (обязательно!)
     await callback.answer()
+    
+    # Редактируем сообщение
     await callback.message.edit_text(
         text=f"{result_text}\n\n💰 Твой счёт: {new_score} очков.\n\nВыбери следующую игру:",
         reply_markup=reply_markup
     )
 
-# --- Настройка Webhook для Railway ---
-
-async def on_startup():
-    """Устанавливает webhook при запуске"""
-    # Railway сам даёт домен, используем его
-    railway_domain = os.getenv("RAILWAY_STATIC_URL") or os.getenv("RAILWAY_PUBLIC_DOMAIN")
-    
-    if railway_domain:
-        webhook_url = f"https://{railway_domain}/webhook"
-        await bot.set_webhook(webhook_url)
-        print(f"✅ Webhook установлен: {webhook_url}")
-    else:
-        print("⚠️ Не найден домен Railway, используем polling...")
-        # Если нет домена - используем polling (для локальной разработки)
-        await dp.start_polling(bot)
-
-async def handle_webhook(request):
-    """Обрабатывает входящие запросы от Telegram"""
-    try:
-        update = types.Update(**await request.json())
-        await dp.feed_update(bot, update)
-        return web.Response(status=200)
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return web.Response(status=500)
-
-# --- Запуск ---
+# --- ЗАПУСК (ТОЛЬКО POLLING) ---
 
 async def main():
-    # Для Railway - используем webhook
-    if os.getenv("RAILWAY_ENVIRONMENT"):
-        app = web.Application()
-        app.router.add_post("/webhook", handle_webhook)
-        
-        # Устанавливаем webhook при старте
-        await on_startup()
-        
-        # Запускаем сервер
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
-        await site.start()
-        
-        print("🤖 Бот запущен на Railway с webhook!")
-        print(f"📁 Данные сохраняются в: {DATA_FILE}")
-        
-        # Держим сервер запущенным
-        await asyncio.Event().wait()
-    else:
-        # Для локальной разработки - polling
-        print("🤖 Бот запущен локально (polling)")
-        await dp.start_polling(bot)
+    print("🤖 Бот запущен на Railway с ПОЛЛИНГОМ!")
+    print("📁 Данные сохраняются в:", DATA_FILE)
+    print("🔄 Начинаем polling...")
+    
+    # Удаляем старый webhook (если был)
+    await bot.delete_webhook(drop_pending_updates=True)
+    
+    # Запускаем polling
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
